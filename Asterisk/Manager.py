@@ -7,6 +7,7 @@ from __future__ import absolute_import
 import datetime
 import re
 import socket
+import threading
 import time
 
 import Asterisk
@@ -200,6 +201,8 @@ class BaseManager(Asterisk.Logging.InstanceLogger):
         self.events = Asterisk.Util.EventCollection()
         self.timeout = timeout
 
+        self._key_lock = threading.Lock()
+
         # Configure logging:
         self.log = self.getLogger()
         self.log.debug('Initialising.')
@@ -339,50 +342,51 @@ class BaseManager(Asterisk.Logging.InstanceLogger):
         Response packet, this is used while closing down the channel.
         '''
 
-        packet = Asterisk.Util.AttributeDict()
-        self.log.debug('In _read_packet().')
-        while True:
-            line = self.file.readline().rstrip()
-            for enc in ('utf-8', 'latin1'):
-                try:
-                    line = line.decode(enc)
-                except:
-                    pass
-            self.log.io('_read_packet: recv %r', line)
+        with self._key_lock:
+            packet = Asterisk.Util.AttributeDict()
+            self.log.debug('In _read_packet().')
+            while True:
+                line = self.file.readline().rstrip()
+                for enc in ('utf-8', 'latin1'):
+                    try:
+                        line = line.decode(enc)
+                    except:
+                        pass
+                self.log.io('_read_packet: recv %r', line)
 
-            if not line:
-                if not packet:
-                    raise GoneAwayError(
-                        'Asterisk Manager connection has gone away.')
+                if not line:
+                    if not packet:
+                        raise GoneAwayError(
+                            'Asterisk Manager connection has gone away.')
 
-                self.log.packet('_read_packet: %r', packet)
+                    self.log.packet('_read_packet: %r', packet)
 
-                if discard_events and 'Event' in packet:
-                    self.log.debug('_read_packet() discarding: %r.', packet)
-                    packet.clear()
-                    continue
+                    if discard_events and 'Event' in packet:
+                        self.log.debug('_read_packet() discarding: %r.', packet)
+                        packet.clear()
+                        continue
 
-                self.log.debug('_read_packet() completed.')
-                return packet
+                    self.log.debug('_read_packet() completed.')
+                    return packet
 
-            val = None
-            if line.count(':') == 1 and line[-1] == ':':  # Empty field:
-                key, val = line[:-1], ''
-            elif line.count(',') == 1 and line[0] == ' ':  # ChannelVariable
-                key, val = line[1:].split(',', 1)
-            else:
-                # Some asterisk features like 'XMPP' presence
-                # send bogus packets with empty lines in the datas
-                # We should properly fail on those packets.
-                try:
-                    key, val = line.split(': ', 1)
-                except:
-                    raise InternalError('Malformed packet detected: %r'
-                                        % packet)
-            if key == 'Response' and val == 'Follows':
-                return self._read_response_follows()
+                val = None
+                if line.count(':') == 1 and line[-1] == ':':  # Empty field:
+                    key, val = line[:-1], ''
+                elif line.count(',') == 1 and line[0] == ' ':  # ChannelVariable
+                    key, val = line[1:].split(',', 1)
+                else:
+                    # Some asterisk features like 'XMPP' presence
+                    # send bogus packets with empty lines in the datas
+                    # We should properly fail on those packets.
+                    try:
+                        key, val = line.split(': ', 1)
+                    except:
+                        raise InternalError('Malformed packet detected: %r'
+                                            % packet)
+                if key == 'Response' and val == 'Follows':
+                    return self._read_response_follows()
 
-            packet[key] = val
+                packet[key] = val
 
     def _dispatch_packet(self, packet):
         'Feed a single packet to an event handler.'
