@@ -815,6 +815,26 @@ class CoreActions(object):  # pylint: disable=R0904
         })
 
         return self._translate_response(self.read_response(id))
+    
+    def Mute(self, channel, direction, state):
+        'Mute or unmute <direction> of a Mute on a <channel>.'
+
+        # Channel - The channel you want to mute.
+        # Direction
+        # in - Set muting on inbound audio stream. (to the PBX)
+        # out - Set muting on outbound audio stream. (from the PBX)
+        # all - Set muting on inbound and outbound audio streams.
+        # State
+        # on - Turn muting on.
+        # off - Turn muting off.
+
+        id = self._write_action('MuteAudio', {
+            'Channel': channel,
+            'Direction': direction,
+            'State': state 
+        })
+
+        return self._translate_response(self.read_response(id))
 
     def Originate(self, channel, context=None, extension=None, priority=None,
                   application=None, data=None, timeout=None, caller_id=None,
