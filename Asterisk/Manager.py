@@ -201,7 +201,7 @@ class BaseManager(Asterisk.Logging.InstanceLogger):
         self.events = Asterisk.Util.EventCollection()
         self.timeout = timeout
 
-        self._key_lock = threading.Lock()
+        self._key_lock = threading.RLock()
 
         # Configure logging:
         self.log = self.getLogger()
@@ -392,8 +392,9 @@ class BaseManager(Asterisk.Logging.InstanceLogger):
         'Feed a single packet to an event handler.'
 
         if 'Response' in packet:
-            self.log.debug('_dispatch_packet() placed response in buffer.')
-            self.response_buffer.append(packet)
+            with self._key_lock:
+                self.log.debug('_dispatch_packet() placed response in buffer.')
+                self.response_buffer.append(packet)
 
         elif 'Event' in packet:
             self._translate_event(packet)
@@ -444,39 +445,44 @@ class BaseManager(Asterisk.Logging.InstanceLogger):
     def read(self):
         'Called by the parent code when activity is detected on our fd.'
 
-        self.log.io('read(): Activity detected on our fd.')
-        packet = self._read_packet()
-        self._dispatch_packet(packet)
+        with self._key_lock:
+            self.log.io('read(): Activity detected on our fd.')
+            packet = self._read_packet()
+            self._dispatch_packet(packet)
+
+        # Yield to other threads (helps release the GIL if called in a tight loop).
+        time.sleep(0.0001)
 
     def read_response(self, id):
         'Return the response packet found for the given action <id>.'
 
-        buffer = self.response_buffer
+        with self._key_lock:
+            buffer = self.response_buffer
 
-        while True:
-            if buffer:
-                for idx, packet in enumerate(buffer):
-                    # It is an error if no ActionID is sent.
-                    # This is intentional.
-                    if packet.ActionID == id:
-                        buffer.pop(idx)
-                        packet.pop('ActionID')
-                        return packet
+            while True:
+                if buffer:
+                    for idx, packet in enumerate(buffer):
+                        # It is an error if no ActionID is sent.
+                        # This is intentional.
+                        if packet.ActionID == id:
+                            buffer.pop(idx)
+                            packet.pop('ActionID')
+                            return packet
 
-            packet = self._read_packet()
+                packet = self._read_packet()
 
-            if 'Event' in packet:
-                self._dispatch_packet(packet)
+                if 'Event' in packet:
+                    self._dispatch_packet(packet)
 
-            elif 'ActionID' not in packet:
-                raise CommunicationError(packet, 'no ActionID')
+                elif 'ActionID' not in packet:
+                    raise CommunicationError(packet, 'no ActionID')
 
-            elif packet.ActionID == id:
-                packet.pop('ActionID')
-                return packet
+                elif packet.ActionID == id:
+                    packet.pop('ActionID')
+                    return packet
 
-            else:
-                buffer.append(packet)
+                else:
+                    buffer.append(packet)
 
     def on_Event(self, event):
         'Triggered when an event is received from the Manager.'
@@ -492,8 +498,7 @@ class BaseManager(Asterisk.Logging.InstanceLogger):
         'Handle one event at a time until doomsday.'
 
         while True:
-            packet = self._read_packet()
-            self._dispatch_packet(packet)
+            self.read()
 
     def strip_evinfo(self, event):
         '''
@@ -936,8 +941,7 @@ class CoreActions(object):  # pylint: disable=R0904
             stop_flag = [False]
 
             while stop_flag[0] is False:
-                packet = self._read_packet()
-                self._dispatch_packet(packet)
+                self.read()
 
         finally:
             self.events -= events
@@ -1035,8 +1039,7 @@ class CoreActions(object):  # pylint: disable=R0904
             stop_flag = [False]
 
             while stop_flag[0] is False:
-                packet = self._read_packet()
-                self._dispatch_packet(packet)
+                self.read()
 
         finally:
             self.events -= events
@@ -1114,8 +1117,7 @@ class CoreActions(object):  # pylint: disable=R0904
             stop_flag = [False]
 
             while stop_flag[0] is False:
-                packet = self._read_packet()
-                self._dispatch_packet(packet)
+                self.read()
 
         finally:
             self.events -= events
@@ -1143,8 +1145,7 @@ class CoreActions(object):  # pylint: disable=R0904
             stop_flag = [False]
 
             while stop_flag[0] == False:
-                packet = self._read_packet()
-                self._dispatch_packet(packet)
+                self.read()
 
         finally:
             self.events -= events
@@ -1172,8 +1173,7 @@ class CoreActions(object):  # pylint: disable=R0904
             stop_flag = [False]
 
             while stop_flag[0] is False:
-                packet = self._read_packet()
-                self._dispatch_packet(packet)
+                self.read()
 
         finally:
             self.events -= events
@@ -1207,8 +1207,7 @@ class CoreActions(object):  # pylint: disable=R0904
             stop_flag = [False]
 
             while stop_flag[0] is False:
-                packet = self._read_packet()
-                self._dispatch_packet(packet)
+                self.read()
 
         finally:
             self.events -= events
@@ -1270,8 +1269,7 @@ class ZapataActions(object):
             stop_flag = [False]
 
             while stop_flag[0] is False:
-                packet = self._read_packet()
-                self._dispatch_packet(packet)
+                self.read()
 
         finally:
             self.events -= events
