@@ -9,6 +9,7 @@ import re
 import socket
 import threading
 import time
+import uuid
 
 import Asterisk
 import Asterisk.Util
@@ -201,6 +202,7 @@ class BaseManager(Asterisk.Logging.InstanceLogger):
         self.events = Asterisk.Util.EventCollection()
         self.timeout = timeout
 
+        self._write_lock = threading.Lock()
         self._key_lock = threading.RLock()
 
         # Configure logging:
@@ -265,8 +267,7 @@ class BaseManager(Asterisk.Logging.InstanceLogger):
         values from the mapping <data>. Return the (string) action identifier
         on success. Values from <data> are omitted if they are None.
         '''
-
-        id = str(time.time())  # Assumes microsecond precision for reliability.
+        id = str(uuid.uuid4())
         lines = ['Action: ' + action, 'ActionID: ' + id]
 
         if data is not None:
@@ -280,13 +281,14 @@ class BaseManager(Asterisk.Logging.InstanceLogger):
 
         self.log.packet('write_action: %r', lines)
 
-        for line in lines:
-            self.file.write(line.encode() + b'\r\n')
-            self.log.io('_write_action: send %r', line + '\r\n')
+        with self._write_lock:
+            for line in lines:
+                self.file.write(line.encode() + b'\r\n')
+                self.log.io('_write_action: send %r', line + '\r\n')
 
-        self.file.write(b'\r\n')
-        self.log.io('_write_action: send: %r', '\r\n')
-        return id
+            self.file.write(b'\r\n')
+            self.log.io('_write_action: send: %r', '\r\n')
+            return id
 
     def _read_response_follows(self):
         '''
